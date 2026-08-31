@@ -27,7 +27,7 @@ const storage = multer.diskStorage({
   }
 });
 
-// File filter restricting uploads to JPEG and PNG with dual MIME/Extension validation (COOP-14)
+// File filter restricting uploads to JPEG and PNG (COOP-14)
 const fileFilter = (req, file, cb) => {
   const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/jpg', 'image/pjpeg'];
   const ext = path.extname(file.originalname).toLowerCase();
@@ -103,28 +103,21 @@ app.get('/dashboard', (req, res) => {
           <button type="submit">Evaluate Risk</button>
         </form>
       </div>
-
       <h3>API Response Output:</h3>
       <pre id="output">Submit the form above to trigger evaluation...</pre>
-
       <script>
         document.getElementById('evalForm').addEventListener('submit', async (e) => {
           e.preventDefault();
           const outputEl = document.getElementById('output');
           outputEl.textContent = 'Processing request...';
-
           const formData = new FormData();
           formData.append('image', document.getElementById('imageInput').files[0]);
           formData.append('mock_temp', document.getElementById('tempInput').value);
           formData.append('mock_humidity', document.getElementById('humidityInput').value);
           formData.append('mock_heat_index', document.getElementById('heatIndexInput').value);
           formData.append('mock_motion', document.getElementById('motionInput').value);
-
           try {
-            const res = await fetch('/api/evaluate-risk', {
-              method: 'POST',
-              body: formData
-            });
+            const res = await fetch('/api/evaluate-risk', { method: 'POST', body: formData });
             const data = await res.json();
             outputEl.textContent = JSON.stringify(data, null, 2);
           } catch (err) {
@@ -145,11 +138,9 @@ app.post('/api/images', (req, res, next) => {
     } else if (err) {
       return res.status(400).json({ success: false, error: err.message });
     }
-
     if (!req.file) {
       return res.status(400).json({ success: false, error: 'No image file provided.' });
     }
-
     return res.status(201).json({
       success: true,
       message: 'Image successfully validated and stored.',
@@ -168,17 +159,10 @@ app.post('/api/images', (req, res, next) => {
 // Primary Combined Risk Evaluation Endpoint
 app.post('/api/evaluate-risk', (req, res, next) => {
   upload.single('image')(req, res, async (err) => {
-    if (err) {
-      return res.status(400).json({ success: false, error: err.message });
-    }
-
+    if (err) return res.status(400).json({ success: false, error: err.message });
     try {
-      if (!req.file) {
-        return res.status(400).json({ success: false, error: 'Image file required.' });
-      }
-
+      if (!req.file) return res.status(400).json({ success: false, error: 'Image file required.' });
       const aiResult = await analyzeChickenImage(req.file.path, req.file.mimetype);
-
       const mockSensorData = {
         temperature: parseFloat(req.body.mock_temp) || 30.0,
         humidity: parseFloat(req.body.mock_humidity) || 60.0,
@@ -186,15 +170,12 @@ app.post('/api/evaluate-risk', (req, res, next) => {
         motionLevel: req.body.mock_motion || "LOW",
         aiStressRisk: aiResult.stress_risk
       };
-
       const riskEvaluation = calculateCombinedStressRisk(mockSensorData);
-
       const rgbSignal = {
         LOW: { color: "GREEN", red: 0, green: 255, blue: 0 },
         MEDIUM: { color: "YELLOW", red: 255, green: 255, blue: 0 },
         HIGH: { color: "RED", red: 255, green: 0, blue: 0 }
       }[riskEvaluation.finalStressRisk];
-
       return res.status(200).json({
         success: true,
         timestamp: new Date().toISOString(),
@@ -203,9 +184,7 @@ app.post('/api/evaluate-risk', (req, res, next) => {
           sensorInputs: mockSensorData,
           aiResult: aiResult,
           finalAssessment: riskEvaluation,
-          hardwareCommand: {
-            rgbIndicator: rgbSignal
-          }
+          hardwareCommand: { rgbIndicator: rgbSignal }
         }
       });
     } catch (error) {
@@ -214,5 +193,8 @@ app.post('/api/evaluate-risk', (req, res, next) => {
   });
 });
 
-const PORT = process.env.PORT || 3000;
+// MOUNT COOP-21 ROUTER HERE
+app.use('/api', require('./routes/telemetryRoutes'));
+
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, '127.0.0.1', () => console.log(`Server running on http://127.0.0.1:${PORT}`));

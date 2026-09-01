@@ -72,12 +72,19 @@ router.get('/monitoring/latest', async (req, res) => {
       .from('telemetry_logs')
       .select('*')
       .order('created_at', { ascending: false })
-      .limit(1)
-      .single();
+      .limit(1);
 
-    if (error) return res.status(500).json({ success: false, error: error.message });
+    if (error) {
+      return res.status(500).json({ success: false, error: error.message });
+    }
 
-    return res.status(200).json({ success: true, data });
+    const latestRecord = Array.isArray(data) && data.length > 0 ? data[0] : null;
+
+    return res.status(200).json({
+      success: true,
+      data: latestRecord,
+      message: latestRecord ? 'Latest telemetry retrieved successfully.' : 'No telemetry records found.'
+    });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
@@ -86,7 +93,7 @@ router.get('/monitoring/latest', async (req, res) => {
 // 3. Retrieve Historical Records
 router.get('/monitoring/history', async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 50;
+    const limit = Number.parseInt(req.query.limit, 10) || 50;
 
     const { data, error } = await supabase
       .from('telemetry_logs')
@@ -96,7 +103,7 @@ router.get('/monitoring/history', async (req, res) => {
 
     if (error) return res.status(500).json({ success: false, error: error.message });
 
-    return res.status(200).json({ success: true, count: data.length, data });
+    return res.status(200).json({ success: true, count: data?.length || 0, data: data || [] });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }

@@ -12,10 +12,35 @@ export interface TelemetryLog {
 }
 
 export interface AIAnalysisResult {
-  stress_risk: StressRiskLevel;
+  stress_risk: StressRiskLevel | 'UNKNOWN';
   confidence: number;
   indicators: string[];
   description: string;
+}
+
+export interface EvaluationResponse {
+  imageId: string;
+  sensorInputs: {
+    temperature: number;
+    humidity: number;
+    heatIndex: number;
+    motionLevel: string;
+    aiStressRisk: StressRiskLevel | 'UNKNOWN';
+  };
+  aiResult: AIAnalysisResult;
+  finalAssessment: {
+    environmentalRisk: StressRiskLevel;
+    finalStressRisk: StressRiskLevel;
+    evaluationSummary: string;
+  };
+  hardwareCommand: {
+    rgbIndicator: {
+      color: string;
+      red: number;
+      green: number;
+      blue: number;
+    };
+  };
 }
 
 export interface ApiResponse<T> {

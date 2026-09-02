@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import type { TelemetryLog, ApiResponse } from '../types/monitoring';
+import type { EvaluationResponse, TelemetryLog, ApiResponse } from '../types/monitoring';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:3000/api';
 
@@ -25,12 +25,12 @@ export const fetchTelemetryHistory = async (limit: number = 50): Promise<Telemet
   return json.data ?? [];
 };
 
-export const evaluateChickenImage = async (formData: FormData): Promise<any> => {
+export const evaluateChickenImage = async (formData: FormData): Promise<EvaluationResponse> => {
   const response = await fetch(`${API_BASE_URL}/evaluate-risk`, {
     method: 'POST',
     body: formData,
   });
   const json = await response.json();
   if (!response.ok || !json.success) throw new Error(json.error || 'Failed to evaluate image');
-  return json.data;
+  return json.data as EvaluationResponse;
 };

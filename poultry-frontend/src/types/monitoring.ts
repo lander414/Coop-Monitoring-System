@@ -1,5 +1,7 @@
 export type StressRiskLevel = 'NONE' | 'LOW' | 'MEDIUM' | 'HIGH';
 
+export type TimeRangeFilter = 'hourly' | 'daily' | 'weekly' | 'all';
+
 export interface TelemetryLog {
   id?: string;
   device_id: string;
@@ -43,10 +45,31 @@ export interface EvaluationResponse {
   };
 }
 
+export interface CameraFrame {
+  frame_id: string;
+  device_id: string;
+  captured_at?: string | null;
+  uploaded_at: string;
+  sequence_id?: string | null;
+  firmware_version?: string | null;
+  storage_name: string;
+  mime_type: string;
+  size_in_bytes: number;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  processing_started_at?: string | null;
+  processed_at?: string | null;
+  ai_stress_risk?: StressRiskLevel | 'UNKNOWN' | null;
+  ai_confidence?: number | null;
+  ai_indicators?: string[] | null;
+  ai_description?: string | null;
+  processing_error?: string | null;
+  imageUrl?: string;
+}
+
 export interface ApiResponse<T> {
   success: boolean;
   data?: T | null;
   count?: number;
   error?: string;
   message?: string;
-}
+}

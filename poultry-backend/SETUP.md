@@ -26,11 +26,17 @@ Add these variables:
 PORT=3000
 GEMINI_API_KEY=your_actual_gemini_api_key_here
 NODE_ENV=development
+DEVICE_INGEST_KEY=replace-with-a-long-random-device-key
+SUPABASE_SERVICE_ROLE_KEY=your-server-only-supabase-service-role-key
 ```
 
 Important:
 - If the key is missing, placeholder, or invalid, the app will fall back to mock analysis.
 - The backend reads `.env` from the folder where it is started, so the backend-local file matters.
+- Browser dashboard routes require a Supabase Auth access token.
+- ESP32 telemetry posts to `/api/monitoring` with the `x-device-key` header matching `DEVICE_INGEST_KEY`.
+- ESP32-CAM frames post to `/api/devices/<device-id>/frames` with the same `x-device-key` header. The firmware does not use a Supabase user token.
+- The backend uses `SUPABASE_SERVICE_ROLE_KEY` for server-side frame persistence. Never place this key in the ESP32 firmware or frontend.
 
 ## 4) Start the backend
 
@@ -103,7 +109,35 @@ The API returns:
 - finalAssessment
 - hardwareCommand
 
-## 7) Open the browser dashboard
+## 7) Prepare camera frame persistence
+
+Run `supabase/camera_frames.sql` in the Supabase SQL editor before enabling ESP32-CAM uploads. This creates the frame metadata table and indexes used by the asynchronous analysis worker.
+
+## 8) Test the ESP32-CAM frame endpoint
+
+The ESP32-CAM sends a JPEG as the `image` multipart field. Use the backend machine's LAN IP, not `127.0.0.1`, when testing from the camera:
+
+```powershell
+curl -X POST http://192.168.x.x:3000/api/devices/ESP32_CAM_01/frames `
+  -H "x-device-key: replace-with-a-long-random-device-key" `
+  -F "image=@C:\path\to\camera-frame.jpg;type=image/jpeg" `
+  -F "captured_at=2026-09-10T12:00:00Z" `
+  -F "sequence_id=1" `
+  -F "firmware_version=initial-test"
+```
+
+The endpoint returns a frame ID and `status: "pending"` with HTTP `202`. The backend then updates the record to `processing`, `completed`, or `failed` as Gemini analysis runs.
+
+Authenticated dashboard clients can read the latest frame metadata with:
+
+```text
+GET /api/devices/<device-id>/frames/latest
+Authorization: Bearer <Supabase access token>
+```
+
+The response includes a protected `imageUrl`. The dashboard must request that URL with the same Supabase bearer token; the ESP32 device key is not used by browser clients.
+
+## 9) Open the browser dashboard
 
 Visit:
 
@@ -116,7 +150,7 @@ Then:
 - enter mock values
 - click Evaluate Risk
 
-## 8) Stop the backend
+## 10) Stop the backend
 
 Press:
 

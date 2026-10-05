@@ -4,13 +4,15 @@ const { createClient } = require('@supabase/supabase-js');
 
 // Initialize Supabase Client
 const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY;
+const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_PUBLISHABLE_KEY;
 
 if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
   console.warn('Warning: Missing Supabase environment variables in .env');
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+const supabase = (SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY)
+  ? createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY)
+  : null;
 
 // Helper Functions for Telemetry
 function calculateHeatIndex(temp, hum) {
@@ -27,6 +29,8 @@ function determineStressRisk(heatIndex, isChickenPresent) {
 // 1. Receive ESP32/Sensor Data & AI Results + Store in Supabase
 router.post('/monitoring', async (req, res) => {
   try {
+    if (!supabase) return res.status(503).json({ success: false, error: 'Database service not configured' });
+
     const { device_id = 'ESP32_COOP_01', temperature, humidity, chicken_present } = req.body;
 
     if (temperature === undefined || humidity === undefined || chicken_present === undefined) {
@@ -68,6 +72,8 @@ router.post('/monitoring', async (req, res) => {
 // 2. Retrieve Latest Readings
 router.get('/monitoring/latest', async (req, res) => {
   try {
+    if (!supabase) return res.status(200).json({ success: true, data: null, message: 'Database not configured.' });
+
     const { data, error } = await supabase
       .from('telemetry_logs')
       .select('*')
@@ -93,11 +99,35 @@ router.get('/monitoring/latest', async (req, res) => {
 // 3. Retrieve Historical Records
 router.get('/monitoring/history', async (req, res) => {
   try {
-    const limit = Number.parseInt(req.query.limit, 10) || 50;
+    if (!supabase) return res.status(200).json({ success: true, count: 0, data: [] });
 
-    const { data, error } = await supabase
+    const range = req.query.range;
+    let defaultLimit = 50;
+    let cutoff = null;
+
+    const now = Date.now();
+    if (range === 'hourly') {
+      cutoff = new Date(now - 60 * 60 * 1000).toISOString();
+      defaultLimit = 120;
+    } else if (range === 'daily') {
+      cutoff = new Date(now - 24 * 60 * 60 * 1000).toISOString();
+      defaultLimit = 300;
+    } else if (range === 'weekly') {
+      cutoff = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
+      defaultLimit = 500;
+    }
+
+    const limit = Number.parseInt(req.query.limit, 10) || defaultLimit;
+
+    let query = supabase
       .from('telemetry_logs')
-      .select('*')
+      .select('*');
+
+    if (cutoff) {
+      query = query.gte('created_at', cutoff);
+    }
+
+    const { data, error } = await query
       .order('created_at', { ascending: false })
       .limit(limit);
 

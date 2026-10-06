@@ -1,7 +1,7 @@
 const fs = require('fs/promises');
 const path = require('path');
 const crypto = require('crypto');
-const { analyzeChickenImage } = require('./aiService');
+const { analyzeChickenImage, formatFullDescription } = require('./aiService');
 
 function createCameraFrameService({ supabase, uploadDir, deleteAfterProcessing = false }) {
   const pendingFrames = [];
@@ -29,13 +29,14 @@ function createCameraFrameService({ supabase, uploadDir, deleteAfterProcessing =
       });
 
       const aiResult = await analyzeChickenImage(frame.filePath, frame.mimeType);
+      const fullDescription = formatFullDescription(aiResult.description, aiResult.suggestions);
 
       await updateFrame(frame.frameId, {
         status: 'completed',
         ai_stress_risk: aiResult.stress_risk,
         ai_confidence: aiResult.confidence,
         ai_indicators: aiResult.indicators,
-        ai_description: aiResult.description,
+        ai_description: fullDescription,
         processed_at: new Date().toISOString(),
         processing_error: null
       });

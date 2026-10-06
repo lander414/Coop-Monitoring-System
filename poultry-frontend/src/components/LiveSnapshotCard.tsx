@@ -1,9 +1,11 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Camera, RefreshCw, AlertCircle, Cpu, Clock, CheckCircle2, Loader2, Image as ImageIcon } from 'lucide-react';
+import { Camera, RefreshCw, AlertCircle, Cpu, Clock, CheckCircle2, Loader2, Image as ImageIcon, Upload, ShieldCheck } from 'lucide-react';
 import type { CameraFrame } from '../types/monitoring';
 import { fetchLatestCameraFrame, resolveFrameImageUrl } from '../services/api';
 import { supabase } from '../lib/supabase';
 import RiskAnalysisBadge from './RiskAnalysisBadge';
+import ManualPhotoUploadModal from './ManualPhotoUploadModal';
+import { extractSuggestions, cleanDescriptionText } from '../lib/suggestionHelper';
 
 interface LiveSnapshotCardProps {
   deviceId?: string;
@@ -18,6 +20,7 @@ export const LiveSnapshotCard: React.FC<LiveSnapshotCardProps> = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [imageLoaded, setImageLoaded] = useState(false);
+  const [uploadModalOpen, setUploadModalOpen] = useState(false);
 
   const loadLatestFrame = useCallback(async () => {
     try {
@@ -84,6 +87,14 @@ export const LiveSnapshotCard: React.FC<LiveSnapshotCardProps> = ({
           <h2 className="mt-1 text-xl font-bold tracking-tight">Real-Time Coop Vision</h2>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setUploadModalOpen(true)}
+            className="flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-100"
+            title="Upload photo for manual AI inspection"
+          >
+            <Upload size={13} />
+            <span className="hidden sm:inline">Upload Photo</span>
+          </button>
           <button
             onClick={loadLatestFrame}
             disabled={loading}
@@ -159,9 +170,36 @@ export const LiveSnapshotCard: React.FC<LiveSnapshotCardProps> = ({
 
             {frame.ai_description && (
               <p className="text-xs leading-5 text-slate-600 border-t border-slate-200/60 pt-2 font-medium">
-                {frame.ai_description}
+                {cleanDescriptionText(frame.ai_description)}
               </p>
             )}
+
+            {/* Top Suggestive Instructions Preview */}
+            {(() => {
+              const suggestions = extractSuggestions(
+                frame.ai_description,
+                frame.ai_stress_risk,
+                frame.ai_indicators,
+                frame.ai_suggestions
+              );
+              if (!suggestions.length) return null;
+              return (
+                <div className="rounded-lg bg-indigo-50/60 p-2.5 border border-indigo-100/80 text-[11px] space-y-1">
+                  <div className="flex items-center gap-1 font-bold text-indigo-700">
+                    <ShieldCheck size={13} />
+                    <span>AI Care Recommendations:</span>
+                  </div>
+                  <p className="text-slate-700 leading-relaxed font-medium">
+                    • {suggestions[0]}
+                  </p>
+                  {suggestions.length > 1 && (
+                    <p className="text-slate-600 leading-relaxed">
+                      • {suggestions[1]}
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
 
             {frame.ai_indicators && frame.ai_indicators.length > 0 && (
               <div className="flex flex-wrap gap-1.5 pt-1">
@@ -203,6 +241,18 @@ export const LiveSnapshotCard: React.FC<LiveSnapshotCardProps> = ({
           </p>
         </div>
       )}
+
+      {/* Manual Photo Upload Modal */}
+      <ManualPhotoUploadModal
+        isOpen={uploadModalOpen}
+        onClose={() => setUploadModalOpen(false)}
+        deviceId={deviceId}
+        onAnalysisComplete={(newFrame) => {
+          setFrame(newFrame);
+          setImageLoaded(false);
+          if (onFrameUpdate) onFrameUpdate(newFrame);
+        }}
+      />
     </div>
   );
 };

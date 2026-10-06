@@ -1,12 +1,38 @@
-# AI-Thinker ESP32-CAM Firmware (Dynamic Wi-Fi Portal)
+# AI-Thinker ESP32-CAM Firmware (Static Wi-Fi Configuration)
 
-Open `esp32cam_firmware.ino` in Arduino IDE. This firmware captures JPEG still images, hosts a local test page, and can upload images to the Node.js backend.
+Open `esp32cam_firmware.ino` in Arduino IDE. This firmware captures JPEG still images, hosts a lightweight local web interface, and uploads images to the Poultry Monitoring Node.js backend.
 
-**No hardcoding needed!** You can configure Wi-Fi and backend credentials directly from your phone or PC browser using the built-in Setup Hotspot & Captive Portal.
+Wi-Fi credentials, backend endpoint, and ingest keys are configured statically at the top of `esp32cam_firmware.ino`.
 
 ---
 
-## Arduino IDE setup
+## Configuration
+
+Edit the configuration constants at the top of [esp32cam_firmware.ino](file:///c:/Users/razel/Documents/GitHub/Coop-Monitoring-System/esp32cam_firmware/esp32cam_firmware.ino):
+
+```cpp
+// =========================
+// Static Wi-Fi & Backend Configuration
+// =========================
+const char* WIFI_SSID = "Lander Agustin";
+const char* WIFI_PASSWORD = "dodoy414";
+
+// Optional: Static IP configuration
+// Set USE_STATIC_IP to true if you want a fixed IP instead of DHCP
+const bool USE_STATIC_IP = false;
+const IPAddress STATIC_IP(192, 168, 100, 50);
+const IPAddress GATEWAY_IP(192, 168, 100, 1);
+const IPAddress SUBNET_MASK(255, 255, 255, 0);
+const IPAddress DNS_IP(192, 168, 100, 1);
+
+// Backend ingestion settings
+const char* DEFAULT_BACKEND_URL = "http://192.168.100.14:3000/api/devices/ESP32_CAM_01/frames";
+const char* DEVICE_INGEST_KEY = "c69d3b007c0243369f7a7613ed324e612dcd222c0e924f5c9325470597c80379";
+```
+
+---
+
+## Arduino IDE Setup
 
 1. Install the Espressif ESP32 board package through **Boards Manager**.
 2. Select **AI Thinker ESP32-CAM** under `Tools > Board > esp32`.
@@ -23,62 +49,36 @@ The sketch uses only standard libraries included with the ESP32 Arduino core:
 - `esp_camera.h`
 - `WiFi.h`
 - `WebServer.h`
-- `DNSServer.h`
-- `Preferences.h`
+- `WiFiUdp.h`
+- `ESPmDNS.h`
 
 ---
 
-## How to Configure Wi-Fi via Web Portal (Method 1)
+## Automatic Backend Discovery (Optional)
 
-### First-Time Setup or New Wi-Fi Network
-1. Power on the ESP32-CAM.
-2. If it has no saved Wi-Fi or cannot connect to the previous network, it automatically launches its own setup hotspot:
-   - **Wi-Fi SSID**: `PoultryCam-Setup`
-   - **Password**: *(None - open network)*
-   - **IP Address**: `192.168.4.1`
-3. On your phone, tablet, or laptop, connect your Wi-Fi to **`PoultryCam-Setup`**.
-4. A captive portal screen will pop up automatically. If it doesn't, simply open your browser and navigate to:
-   ```text
-   http://192.168.4.1
-   ```
-5. The portal will display:
-   - **Nearby Wi-Fi Networks (2.4GHz)**: Pick your router/hotspot SSID from the dropdown.
-   - **Wi-Fi Password**: Enter your network password.
-   - **Backend Ingest URL**: Pre-filled with automatic discovery or default LAN address.
-   - **Device Ingest Key**: Your backend's configured secret key.
-6. Click **Save & Connect**.
-7. The ESP32-CAM will save your settings permanently into non-volatile flash memory (`Preferences`), reboot, and automatically connect to your router.
+Even with static Wi-Fi configuration, the firmware supports UDP auto-discovery:
+- When the ESP32 connects to Wi-Fi, it broadcasts a UDP packet on port `5005`.
+- If `poultry-backend` is running on the local network, it will respond with its actual LAN IP address and update the ingest URL dynamically in memory.
+- If UDP discovery is not available, it simply falls back to `DEFAULT_BACKEND_URL`.
 
 ---
 
-## UDP Auto-Discovery (Zero IP Input Needed)
+## Accessing the Camera Web Interface
 
-You do **not** need to manually look up or configure your computer's IP address:
-- When the ESP32 connects to Wi-Fi, it broadcasts a UDP discovery packet on port `5005`.
-- The Node.js backend (`poultry-backend`) automatically detects the camera, replies with its current LAN IP (`http://<PC_IP>:3000/api/devices/ESP32_CAM_01/frames`), and the camera auto-configures itself!
-- If your computer's IP address ever changes (e.g. router DHCP reboots), the camera will automatically re-discover the new IP on its next cycle.
-
----
-
-## Accessing the Camera without IP (`poultrycam.local`)
-
-You never need to check the Serial Monitor for the camera's router IP:
-- Open your browser to:
+When connected to your local network, you can access the camera:
+- Via mDNS:
   ```text
   http://poultrycam.local
   ```
-- To adjust settings at any time:
-  ```text
-  http://poultrycam.local/setup
-  ```
+- Or via the assigned IP address printed in the Serial Monitor (e.g. `http://192.168.100.50` or router DHCP IP).
 
-To wipe saved settings and force the camera back into Setup Hotspot mode, click **"Reset to Factory Defaults"** at the bottom of the `/setup` page.
+Endpoints:
+- `/` - Status dashboard (connection info, last capture and upload status)
+- `/capture` - Manual capture and JPEG download
 
 ---
 
 ## Wiring and Upload
-
-For normal operation, connect only the ESP32-CAM to the ESP32-CAM-MB programmer and USB.
 
 1. Insert the ESP32-CAM into the ESP32-CAM-MB.
 2. Connect the MB board to USB.
@@ -91,7 +91,6 @@ For normal operation, connect only the ESP32-CAM to the ESP32-CAM-MB programmer 
 
 ## Troubleshooting
 
-- **Portal doesn't show up when connecting to `PoultryCam-Setup`**: Open your browser and type `http://192.168.4.1/setup` manually.
-- **ESP32-CAM Brownout / Crash**: The camera module draws high peak currents when turning on Wi-Fi and the camera sensor simultaneously. Ensure you use a quality USB cable and a reliable 5V/2A power source.
-- **5GHz Wi-Fi**: ESP32 only supports **2.4GHz** Wi-Fi networks. Make sure your router or mobile hotspot broadcasts a 2.4GHz band.
-- **Backend Uploads**: Always use the local IP of your backend machine (e.g. `192.168.X.X`), never `127.0.0.1` or `localhost`.
+- **Wi-Fi Connection Fails**: Make sure your Wi-Fi is **2.4GHz**. The ESP32 does not support 5GHz bands. Check SSID and password spelling.
+- **ESP32-CAM Brownout / Reset Loop**: ESP32-CAM draws high peak current when initializing Wi-Fi and the camera sensor. Use a quality USB cable and a reliable 5V power supply (at least 2A).
+- **Backend Upload Issues**: Ensure the backend server is running and reachable from the same local network subnet.

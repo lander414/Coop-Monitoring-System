@@ -81,4 +81,32 @@ export const evaluateChickenImage = async (formData: FormData): Promise<Evaluati
   const json = await response.json();
   if (!response.ok || !json.success) throw new Error(json.error || 'Failed to evaluate image');
   return json.data as EvaluationResponse;
+};
+
+export interface ManualUploadResult {
+  frameId: string;
+  imageUrl: string;
+  aiResult: import('../types/monitoring').AIAnalysisResult;
+  frame: import('../types/monitoring').CameraFrame;
+}
+
+export const uploadAndAnalyzePhoto = async (
+  file: File,
+  deviceId: string = 'ESP32_COOP_01'
+): Promise<ManualUploadResult> => {
+  const formData = new FormData();
+  formData.append('image', file);
+  formData.append('deviceId', deviceId);
+
+  const response = await authenticatedFetch(`${API_BASE_URL}/frames/manual-upload`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  const json: ApiResponse<ManualUploadResult> = await response.json();
+  if (!response.ok || !json.success || !json.data) {
+    throw new Error(json.error || 'Failed to analyze photo');
+  }
+
+  return json.data;
 };

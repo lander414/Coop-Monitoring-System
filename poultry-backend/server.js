@@ -6,7 +6,9 @@ const cors = require('cors');
 require('dotenv').config();
 const { createClient } = require('@supabase/supabase-js');
 
-const { analyzeChickenImage } = require('./services/aiService');
+const crypto = require('crypto');
+
+const { analyzeChickenImage, formatFullDescription } = require('./services/aiService');
 const { calculateCombinedStressRisk } = require('./services/riskEngine');
 const { createCameraFrameService } = require('./services/cameraFrameService');
 
@@ -244,6 +246,83 @@ app.post('/api/devices/:deviceId/frames', requireDevice, (req, res) => {
       await fs.unlink(req.file.path).catch(() => undefined);
       console.error(`[CAMERA] Frame upload failed: ${error.message}`);
       return res.status(503).json({ success: false, error: 'Camera frame could not be queued.' });
+    }
+  });
+});
+
+// Manual photo upload & AI inspection endpoint with suggestive instructions
+app.post('/api/frames/manual-upload', requireUser, (req, res) => {
+  upload.single('image')(req, res, async (err) => {
+    if (err instanceof multer.MulterError) {
+      return res.status(400).json({ success: false, error: `Upload error: ${err.message}` });
+    }
+    if (err) {
+      return res.status(400).json({ success: false, error: err.message });
+    }
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: 'Photo file is required (JPEG or PNG).' });
+    }
+
+    try {
+      const deviceId = req.body.deviceId || 'ESP32_COOP_01';
+      const frameId = crypto.randomUUID();
+
+      // Run AI visual analysis with suggestive instructions
+      const aiResult = await analyzeChickenImage(req.file.path, req.file.mimetype);
+      const fullDescription = formatFullDescription(aiResult.description, aiResult.suggestions);
+
+      const frameRecord = {
+        frame_id: frameId,
+        device_id: deviceId,
+        captured_at: new Date().toISOString(),
+        uploaded_at: new Date().toISOString(),
+        sequence_id: 'manual-' + Date.now(),
+        firmware_version: 'manual-upload-ui',
+        storage_name: path.basename(req.file.path),
+        mime_type: req.file.mimetype,
+        size_in_bytes: req.file.size,
+        status: 'completed',
+        processing_started_at: new Date().toISOString(),
+        processed_at: new Date().toISOString(),
+        ai_stress_risk: aiResult.stress_risk,
+        ai_confidence: aiResult.confidence,
+        ai_indicators: aiResult.indicators,
+        ai_description: fullDescription,
+        processing_error: null
+      };
+
+      if (supabase) {
+        const { error: insertError } = await supabase.from('camera_frames').insert([frameRecord]);
+        if (insertError) {
+          console.warn('[MANUAL-UPLOAD] Supabase persistence error:', insertError.message);
+        }
+      }
+
+      return res.status(201).json({
+        success: true,
+        message: 'Photo analyzed successfully with suggestive instructions.',
+        data: {
+          frameId,
+          imageUrl: `/api/devices/${encodeURIComponent(deviceId)}/frames/${frameId}/image`,
+          aiResult: {
+            stress_risk: aiResult.stress_risk,
+            confidence: aiResult.confidence,
+            indicators: aiResult.indicators,
+            description: aiResult.description,
+            suggestions: aiResult.suggestions
+          },
+          frame: {
+            ...frameRecord,
+            imageUrl: `/api/devices/${encodeURIComponent(deviceId)}/frames/${frameId}/image`
+          }
+        }
+      });
+    } catch (error) {
+      console.error(`[MANUAL-UPLOAD] Analysis failed: ${error.message}`);
+      return res.status(500).json({
+        success: false,
+        error: `Photo analysis failed: ${error.message}`
+      });
     }
   });
 });

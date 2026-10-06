@@ -18,6 +18,7 @@ export interface AIAnalysisResult {
   confidence: number;
   indicators: string[];
   description: string;
+  suggestions?: string[];
 }
 
 export interface EvaluationResponse {
@@ -62,6 +63,7 @@ export interface CameraFrame {
   ai_confidence?: number | null;
   ai_indicators?: string[] | null;
   ai_description?: string | null;
+  ai_suggestions?: string[] | null;
   processing_error?: string | null;
   imageUrl?: string;
 }

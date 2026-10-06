@@ -1,44 +1,43 @@
 #include "esp_camera.h"
 #include <WiFi.h>
 #include <WebServer.h>
-#include <DNSServer.h>
-#include <Preferences.h>
 #include <WiFiUdp.h>
 #include <ESPmDNS.h>
 
 // =========================
-// Default / Fallback configuration
+// Static Wi-Fi & Backend Configuration
 // =========================
-const char* DEFAULT_WIFI_SSID = "Lander Agustin";
-const char* DEFAULT_WIFI_PASSWORD = "dodoy414";
+const char* WIFI_SSID = "Lander Agustin";
+const char* WIFI_PASSWORD = "dodoy414";
+
+// Optional: Static IP configuration
+// Set USE_STATIC_IP to true to use a fixed IP instead of router DHCP
+const bool USE_STATIC_IP = false;
+const IPAddress STATIC_IP(192, 168, 100, 50);
+const IPAddress GATEWAY_IP(192, 168, 100, 1);
+const IPAddress SUBNET_MASK(255, 255, 255, 0);
+const IPAddress DNS_IP(192, 168, 100, 1);
+
+// Backend ingestion settings
 const char* DEFAULT_BACKEND_URL = "http://192.168.100.14:3000/api/devices/ESP32_CAM_01/frames";
-const char* DEFAULT_DEVICE_INGEST_KEY = "c69d3b007c0243369f7a7613ed324e612dcd222c0e924f5c9325470597c80379";
+const char* DEVICE_INGEST_KEY = "c69d3b007c0243369f7a7613ed324e612dcd222c0e924f5c9325470597c80379";
 
 const char* DEVICE_ID = "ESP32_CAM_01";
-const char* FIRMWARE_VERSION = "esp32cam-autodiscovery-1.2";
+const char* FIRMWARE_VERSION = "esp32cam-static-1.3";
 
-// Captive Portal Hotspot configuration
-const char* AP_SSID = "PoultryCam-Setup";
-const char* AP_PASSWORD = "";  // Open network for setup
-const byte DNS_PORT = 53;
-const IPAddress AP_IP(192, 168, 4, 1);
-const IPAddress AP_NETMASK(255, 255, 255, 0);
-
-// UDP Auto-Discovery port
+// UDP Auto-Discovery port (auto-detects backend IP on the local network)
 const unsigned int DISCOVERY_PORT = 5005;
 
-// Dynamic settings (loaded from Preferences / NVS flash)
-String wifiSsid = "";
-String wifiPassword = "";
-String backendUrl = "";
-String deviceIngestKey = "";
+// Active backend URL (defaults to DEFAULT_BACKEND_URL, auto-updated if backend is detected via UDP)
+String backendUrl = DEFAULT_BACKEND_URL;
 
+// Capture and upload intervals
 const unsigned long CAPTURE_INTERVAL = 30000UL;
 const bool ENABLE_AUTO_CAPTURE = true;
 const bool ENABLE_AUTO_UPLOAD = true;
 const bool ENABLE_STREAM_ENDPOINT = false;   // Keep disabled to stabilize memory on ESP32-CAM
 
-// Camera settings
+// Camera resolution and JPEG settings
 const framesize_t CAMERA_FRAME_SIZE_WITH_PSRAM = FRAMESIZE_XGA;
 const framesize_t CAMERA_FRAME_SIZE_WITHOUT_PSRAM = FRAMESIZE_VGA;
 const int CAMERA_JPEG_QUALITY_WITH_PSRAM = 10;
@@ -68,23 +67,14 @@ const unsigned long BACKEND_TIMEOUT = 15000UL;
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
 
-enum DeviceMode {
-  MODE_STA,
-  MODE_AP
-};
-
-DeviceMode currentMode = MODE_STA;
 WebServer server(80);
-DNSServer dnsServer;
-Preferences preferences;
 WiFiUDP udp;
 
 bool udpStarted = false;
+bool mdnsStarted = false;
 bool cameraReady = false;
 bool webServerStarted = false;
 bool captureInProgress = false;
-bool shouldReboot = false;
-unsigned long rebootAtMillis = 0;
 
 unsigned long lastCaptureMillis = 0;
 unsigned long lastWifiAttemptMillis = 0;
@@ -94,12 +84,15 @@ size_t lastCaptureSize = 0;
 String lastCaptureStatus = "No image captured yet";
 String lastUploadStatus = "Automatic upload disabled";
 
-unsigned long lastScanMillis = 0;
-int cachedNetworkCount = -1;
+// =========================
+// Helper Functions
+// =========================
+bool isPlaceholder(const char* value) {
+  if (value == nullptr) return true;
+  String s = value;
+  return s.length() == 0 || s.indexOf("YOUR_") >= 0 || s.indexOf("replace-with") >= 0;
+}
 
-// =========================
-// Helper & Storage Functions
-// =========================
 bool isPlaceholder(const String& value) {
   return value.length() == 0 || value.indexOf("YOUR_") >= 0 || value.indexOf("replace-with") >= 0;
 }
@@ -114,46 +107,10 @@ String extractJsonValue(const String& json, const String& key) {
   return json.substring(valStart + 1, valEnd);
 }
 
-void loadConfiguration() {
-  preferences.begin("poultry", true);
-  wifiSsid = preferences.getString("ssid", DEFAULT_WIFI_SSID);
-  wifiPassword = preferences.getString("pass", DEFAULT_WIFI_PASSWORD);
-  backendUrl = preferences.getString("backend", DEFAULT_BACKEND_URL);
-  deviceIngestKey = preferences.getString("key", DEFAULT_DEVICE_INGEST_KEY);
-  preferences.end();
-
-  Serial.println("[CONFIG] Loaded settings from flash:");
-  Serial.printf("  SSID: %s\n", wifiSsid.length() > 0 ? wifiSsid.c_str() : "(not set)");
-  Serial.printf("  Backend URL: %s\n", backendUrl.c_str());
-  Serial.printf("  Ingest Key: %s\n", deviceIngestKey.length() > 0 ? "[configured]" : "(not set)");
-}
-
-void saveConfiguration(const String& ssid, const String& pass, const String& backend, const String& key) {
-  preferences.begin("poultry", false);
-  preferences.putString("ssid", ssid);
-  preferences.putString("pass", pass);
-  preferences.putString("backend", backend);
-  preferences.putString("key", key);
-  preferences.end();
-
-  wifiSsid = ssid;
-  wifiPassword = pass;
-  backendUrl = backend;
-  deviceIngestKey = key;
-  Serial.println("[CONFIG] Settings saved to flash memory.");
-}
-
-void clearConfiguration() {
-  preferences.begin("poultry", false);
-  preferences.clear();
-  preferences.end();
-  Serial.println("[CONFIG] Flash memory wiped.");
-}
-
 void printBanner() {
   Serial.println();
   Serial.println("====================================");
-  Serial.println("POULTRY ESP32-CAM (Auto-Discovery)");
+  Serial.println("POULTRY ESP32-CAM (Static Config)");
   Serial.println("====================================");
 }
 
@@ -188,13 +145,7 @@ bool discoverBackendServer() {
         if (discoveredUrl.length() > 0 && discoveredUrl.startsWith("http://")) {
           Serial.println("[DISCOVERY] Auto-discovered backend!");
           Serial.println("[DISCOVERY] URL: " + discoveredUrl);
-          if (discoveredUrl != backendUrl) {
-            backendUrl = discoveredUrl;
-            preferences.begin("poultry", false);
-            preferences.putString("backend", backendUrl);
-            preferences.end();
-            Serial.println("[DISCOVERY] Updated backend URL saved to flash.");
-          }
+          backendUrl = discoveredUrl;
           return true;
         }
       }
@@ -202,7 +153,7 @@ bool discoverBackendServer() {
     delay(20);
   }
 
-  Serial.println("[DISCOVERY] No backend response received (will retry automatically).");
+  Serial.println("[DISCOVERY] No backend response received (using default URL).");
   return false;
 }
 
@@ -219,9 +170,6 @@ void checkIncomingDiscovery() {
       if (discoveredUrl.length() > 0 && discoveredUrl.startsWith("http://") && discoveredUrl != backendUrl) {
         Serial.println("[DISCOVERY] Backend announcement received! Updated URL: " + discoveredUrl);
         backendUrl = discoveredUrl;
-        preferences.begin("poultry", false);
-        preferences.putString("backend", backendUrl);
-        preferences.end();
       }
     }
   }
@@ -231,15 +179,24 @@ void checkIncomingDiscovery() {
 // Wi-Fi Connection
 // =========================
 bool connectToWiFi() {
-  if (isPlaceholder(wifiSsid)) {
-    Serial.println("[WIFI] No valid SSID configured.");
+  if (isPlaceholder(WIFI_SSID)) {
+    Serial.println("[WIFI] No valid SSID configured. Please set WIFI_SSID.");
     return false;
   }
 
   Serial.print("[WIFI] Connecting to: ");
-  Serial.println(wifiSsid);
+  Serial.println(WIFI_SSID);
   WiFi.mode(WIFI_STA);
-  WiFi.begin(wifiSsid.c_str(), wifiPassword.c_str());
+
+  if (USE_STATIC_IP) {
+    if (!WiFi.config(STATIC_IP, GATEWAY_IP, SUBNET_MASK, DNS_IP)) {
+      Serial.println("[WIFI] Static IP configuration failed, defaulting to DHCP.");
+    } else {
+      Serial.printf("[WIFI] Configured static IP: %s\n", STATIC_IP.toString().c_str());
+    }
+  }
+
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
   unsigned long startedAt = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - startedAt < 20000UL) {
@@ -263,7 +220,19 @@ bool connectToWiFi() {
 
 void maintainWiFi() {
   if (WiFi.status() == WL_CONNECTED) {
-    consecutiveWifiFailures = 0;
+    if (consecutiveWifiFailures > 0) {
+      Serial.println("[WIFI] Connection restored!");
+      Serial.print("[WIFI] IP Address: ");
+      Serial.println(WiFi.localIP());
+      if (!mdnsStarted) {
+        if (MDNS.begin("poultrycam")) {
+          MDNS.addService("http", "tcp", 80);
+          mdnsStarted = true;
+        }
+      }
+      discoverBackendServer();
+      consecutiveWifiFailures = 0;
+    }
     return;
   }
 
@@ -274,14 +243,11 @@ void maintainWiFi() {
   consecutiveWifiFailures++;
   Serial.printf("[WIFI] Connection lost. Retry #%u...\n", consecutiveWifiFailures);
 
-  if (consecutiveWifiFailures >= 6) {
-    Serial.println("[WIFI] Multiple connection failures. Switching to AP Setup mode...");
-    startSetupAP();
-    return;
-  }
-
   WiFi.disconnect();
-  WiFi.begin(wifiSsid.c_str(), wifiPassword.c_str());
+  if (USE_STATIC_IP) {
+    WiFi.config(STATIC_IP, GATEWAY_IP, SUBNET_MASK, DNS_IP);
+  }
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 }
 
 // =========================
@@ -396,7 +362,7 @@ bool sendImageToBackend(camera_fb_t* frame, unsigned long sequenceId) {
     Serial.println("[BACKEND] Upload skipped because Wi-Fi is disconnected.");
     return false;
   }
-  if (isPlaceholder(backendUrl) || isPlaceholder(deviceIngestKey)) {
+  if (isPlaceholder(backendUrl) || isPlaceholder(DEVICE_INGEST_KEY)) {
     lastUploadStatus = "Upload not configured";
     Serial.println("[BACKEND] Set backend URL and ingest key first.");
     return false;
@@ -447,7 +413,7 @@ bool sendImageToBackend(camera_fb_t* frame, unsigned long sequenceId) {
   client.println("Connection: close");
   client.printf("Content-Type: %s\r\n", contentType.c_str());
   client.printf("Content-Length: %u\r\n", static_cast<unsigned int>(contentLength));
-  client.printf("x-device-key: %s\r\n\r\n", deviceIngestKey.c_str());
+  client.printf("x-device-key: %s\r\n\r\n", DEVICE_INGEST_KEY);
   client.print(fileHeader);
   if (!writeImageToClient(client, frame->buf, frame->len)) {
     Serial.println("[BACKEND] Image upload interrupted while sending JPEG.");
@@ -482,17 +448,11 @@ bool sendImageToBackend(camera_fb_t* frame, unsigned long sequenceId) {
 }
 
 // =========================
-// Web Portal & Handlers
+// Web Server & Handlers
 // =========================
-
 void handleRoot() {
-  if (currentMode == MODE_AP) {
-    handleSetupPortal();
-    return;
-  }
-
   String html;
-  html.reserve(2400);
+  html.reserve(2000);
   html += "<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
   html += "<title>Poultry ESP32-CAM</title>";
   html += "<style>"
@@ -507,16 +467,15 @@ void handleRoot() {
           ".btn{display:block;text-align:center;padding:10px;border-radius:8px;font-weight:600;text-decoration:none;font-size:14px;transition:0.2s;}"
           ".btn-primary{background:#2563eb;color:#fff;}"
           ".btn-primary:hover{background:#1d4ed8;}"
-          ".btn-config{background:#0284c7;color:#fff;}"
-          ".btn-config:hover{background:#0369a1;}"
           "</style></head><body><div class='card'>";
 
   html += "<h1>Poultry ESP32-CAM</h1>";
-  html += "<div class='row'><span class='label'>Status:</span><span class='val'><span class='badge'>";
+  html += "<div class='row'><span class='label'>Status:</span><span class='val'><span class='badge ";
+  html += (WiFi.status() == WL_CONNECTED ? "'>" : "badge-off'>");
   html += WiFi.status() == WL_CONNECTED ? "Connected" : "Offline";
   html += "</span></span></div>";
 
-  html += "<div class='row'><span class='label'>Network:</span><span class='val'>" + wifiSsid + "</span></div>";
+  html += "<div class='row'><span class='label'>Network:</span><span class='val'>" + String(WIFI_SSID) + "</span></div>";
   html += "<div class='row'><span class='label'>IP Address:</span><span class='val'>" + WiFi.localIP().toString() + "</span></div>";
   html += "<div class='row'><span class='label'>mDNS Host:</span><span class='val'>http://poultrycam.local</span></div>";
   html += "<div class='row'><span class='label'>Backend URL:</span><span class='val' style='word-break:break-all;font-size:12px;'>" + backendUrl + "</span></div>";
@@ -527,174 +486,9 @@ void handleRoot() {
   html += "<div class='actions'>";
   html += "<a href='/capture' class='btn btn-primary'>Capture Single JPEG</a>";
   if (ENABLE_STREAM_ENDPOINT) html += "<a href='/stream' class='btn btn-primary'>Open Live Stream</a>";
-  html += "<a href='/setup' class='btn btn-config'>Configure Wi-Fi & Backend Settings</a>";
   html += "</div></div></body></html>";
 
   server.send(200, "text/html", html);
-}
-
-void handleSetupPortal() {
-  if (cachedNetworkCount < 0 || millis() - lastScanMillis > 20000UL) {
-    Serial.println("[PORTAL] Scanning networks for portal UI...");
-    cachedNetworkCount = WiFi.scanNetworks();
-    lastScanMillis = millis();
-    Serial.printf("[PORTAL] Found %d networks.\n", cachedNetworkCount);
-  }
-  int n = cachedNetworkCount;
-
-  String html;
-  html.reserve(4000);
-  html += "<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
-  html += "<title>Poultry Cam Setup</title>";
-  html += "<style>"
-          "body{font-family:system-ui,-apple-system,sans-serif;background:#0b1329;color:#e2e8f0;margin:0;padding:20px;display:flex;justify-content:center;}"
-          ".container{max-width:460px;width:100%;background:#1e293b;border:1px solid #334155;border-radius:14px;padding:24px;box-shadow:0 12px 30px rgba(0,0,0,0.5);}"
-          "h2{margin:0 0 6px 0;font-size:22px;color:#38bdf8;}"
-          "p.sub{color:#94a3b8;font-size:13px;margin:0 0 20px 0;}"
-          ".status-box{background:#0f172a;border-left:4px solid #10b981;padding:10px 14px;border-radius:6px;font-size:13px;margin-bottom:20px;}"
-          ".form-group{margin-bottom:16px;text-align:left;}"
-          "label{display:block;font-size:13px;font-weight:600;margin-bottom:6px;color:#cbd5e1;}"
-          "input,select{width:100%;padding:10px 12px;box-sizing:border-box;border-radius:8px;border:1px solid #475569;background:#0f172a;color:#fff;font-size:14px;}"
-          "input:focus,select:focus{border-color:#38bdf8;outline:none;box-shadow:0 0 0 2px rgba(56,189,248,0.2);}"
-          "button{width:100%;padding:12px;border:none;border-radius:8px;font-weight:700;font-size:15px;cursor:pointer;transition:0.2s;}"
-          ".btn-save{background:linear-gradient(135deg,#10b981,#059669);color:#fff;margin-top:10px;}"
-          ".btn-save:hover{filter:brightness(1.1);}"
-          ".btn-clear{background:#dc2626;color:#fff;margin-top:10px;}"
-          ".btn-back{background:#334155;color:#e2e8f0;margin-top:8px;display:block;text-align:center;text-decoration:none;padding:10px;border-radius:8px;font-size:13px;}"
-          ".note{font-size:11px;color:#64748b;margin-top:4px;}"
-          "</style>"
-          "<script>"
-          "function onSelectChange(val){"
-          "  var manualInput = document.getElementById('manual_ssid');"
-          "  if(val === '__manual__'){ manualInput.style.display = 'block'; manualInput.focus(); }"
-          "  else { manualInput.style.display = 'none'; }"
-          "}"
-          "</script></head><body><div class='container'>";
-
-  html += "<h2>Poultry Cam Setup</h2>";
-  html += "<p class='sub'>Configure device Wi-Fi connection and backend URL.</p>";
-
-  html += "<div class='status-box'>";
-  if (currentMode == MODE_AP) {
-    html += "Mode: <b>Hotspot Setup (AP)</b><br>SSID: <code>" + String(AP_SSID) + "</code>";
-  } else {
-    html += "Mode: <b>Connected (STA)</b><br>Current IP: <code>" + WiFi.localIP().toString() + "</code><br>Host: <code>http://poultrycam.local</code>";
-  }
-  html += "</div>";
-
-  html += "<form method='POST' action='/save'>";
-
-  // Wi-Fi SSID Selection
-  html += "<div class='form-group'><label for='ssid'>Select Wi-Fi Network (2.4GHz):</label>";
-  html += "<select name='ssid' id='ssid' onchange='onSelectChange(this.value)'>";
-
-  bool currentFound = false;
-  if (n <= 0) {
-    html += "<option value='__manual__'>No networks found - Enter manually</option>";
-  } else {
-    for (int i = 0; i < n; ++i) {
-      String foundSSID = WiFi.SSID(i);
-      int rssi = WiFi.RSSI(i);
-      String selected = (foundSSID == wifiSsid) ? " selected" : "";
-      if (foundSSID == wifiSsid) currentFound = true;
-      html += "<option value='" + foundSSID + "'" + selected + ">" + foundSSID + " (" + String(rssi) + " dBm)" + (WiFi.encryptionType(i) == WIFI_AUTH_OPEN ? " [Open]" : "") + "</option>";
-    }
-    html += "<option value='__manual__'>-- Enter hidden / manual SSID --</option>";
-  }
-  html += "</select>";
-
-  String manualDisplay = (n <= 0 || !currentFound) ? "block" : "none";
-  html += "<input type='text' id='manual_ssid' name='manual_ssid' placeholder='Enter Wi-Fi SSID manually' value='" + (currentFound ? "" : wifiSsid) + "' style='margin-top:8px;display:" + manualDisplay + ";'>";
-  html += "</div>";
-
-  // Wi-Fi Password
-  html += "<div class='form-group'><label for='password'>Wi-Fi Password:</label>";
-  html += "<input type='password' id='password' name='password' value='" + wifiPassword + "' placeholder='Enter Wi-Fi password'>";
-  html += "<div class='note'>Leave blank if the selected Wi-Fi network has no password.</div>";
-  html += "</div>";
-
-  // Backend Ingest URL
-  html += "<div class='form-group'><label for='backend_url'>Backend Ingest URL (Auto-discovered via UDP):</label>";
-  html += "<input type='text' id='backend_url' name='backend_url' value='" + backendUrl + "' placeholder='http://192.168.1.100:3000/api/devices/ESP32_CAM_01/frames'>";
-  html += "<div class='note'>Auto-updated over Wi-Fi when your poultry backend is running.</div>";
-  html += "</div>";
-
-  // Device Ingest Key
-  html += "<div class='form-group'><label for='device_key'>Device Ingest Key:</label>";
-  html += "<input type='text' id='device_key' name='device_key' value='" + deviceIngestKey + "' placeholder='Secret device key'>";
-  html += "</div>";
-
-  html += "<button type='submit' class='btn-save'>Save & Connect</button>";
-  html += "</form>";
-
-  html += "<form method='POST' action='/clear' onsubmit='return confirm(\"Wipe saved Wi-Fi and reboot into setup mode?\")'>";
-  html += "<button type='submit' class='btn-clear'>Reset to Factory Defaults</button>";
-  html += "</form>";
-
-  if (currentMode == MODE_STA) {
-    html += "<a href='/' class='btn-back'>&larr; Back to Device Status</a>";
-  }
-
-  html += "</div></body></html>";
-  server.send(200, "text/html", html);
-}
-
-void handleSaveConfig() {
-  String selectedSsid = server.arg("ssid");
-  String manualSsid = server.arg("manual_ssid");
-  String newSsid = (selectedSsid == "__manual__" || selectedSsid.length() == 0) ? manualSsid : selectedSsid;
-  newSsid.trim();
-
-  String newPass = server.arg("password");
-  newPass.trim();
-
-  String newBackend = server.arg("backend_url");
-  newBackend.trim();
-
-  String newKey = server.arg("device_key");
-  newKey.trim();
-
-  if (newSsid.length() == 0) {
-    server.send(400, "text/html", "<h3>Error: Wi-Fi SSID cannot be empty.</h3><p><a href='/setup'>Go back</a></p>");
-    return;
-  }
-
-  saveConfiguration(newSsid, newPass, newBackend, newKey);
-
-  String html = "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
-  html += "<title>Configuration Saved</title>";
-  html += "<style>body{font-family:system-ui;background:#0f172a;color:#f8fafc;padding:30px;text-align:center;}"
-          ".card{max-width:440px;margin:auto;background:#1e293b;padding:30px;border-radius:12px;border:1px solid #334155;}"
-          "h2{color:#10b981;margin-top:0;}p{color:#cbd5e1;font-size:14px;line-height:1.5;}"
-          "code{background:#0f172a;padding:3px 6px;border-radius:4px;color:#38bdf8;}"
-          "</style></head><body><div class='card'>";
-  html += "<h2>Configuration Saved!</h2>";
-  html += "<p>The camera is restarting now to connect to <code>" + newSsid + "</code>.</p>";
-  html += "<p>You can access it anytime at: <code>http://poultrycam.local</code></p>";
-  html += "</div></body></html>";
-
-  server.send(200, "text/html", html);
-
-  shouldReboot = true;
-  rebootAtMillis = millis() + 2500;
-}
-
-void handleClearConfig() {
-  clearConfiguration();
-
-  String html = "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
-  html += "<title>Cleared</title>";
-  html += "<style>body{font-family:system-ui;background:#0f172a;color:#f8fafc;padding:30px;text-align:center;}"
-          ".card{max-width:440px;margin:auto;background:#1e293b;padding:30px;border-radius:12px;border:1px solid #334155;}"
-          "h2{color:#ef4444;margin-top:0;}</style></head><body><div class='card'>";
-  html += "<h2>Defaults Cleared</h2>";
-  html += "<p>Saved settings wiped. The camera is rebooting into AP Setup mode...</p>";
-  html += "</div></body></html>";
-
-  server.send(200, "text/html", html);
-
-  shouldReboot = true;
-  rebootAtMillis = millis() + 2000;
 }
 
 void handleCapture() {
@@ -746,82 +540,25 @@ void handleStream() {
 }
 
 void handleNotFound() {
-  if (currentMode == MODE_AP) {
-    server.sendHeader("Location", "http://192.168.4.1/setup", true);
-    server.send(302, "text/plain", "");
-    return;
-  }
   server.send(404, "text/plain", "Not Found");
 }
 
 void registerServerRoutes() {
   server.on("/", HTTP_GET, handleRoot);
-  server.on("/setup", HTTP_GET, handleSetupPortal);
-  server.on("/save", HTTP_POST, handleSaveConfig);
-  server.on("/clear", HTTP_POST, handleClearConfig);
   server.on("/capture", HTTP_GET, handleCapture);
   if (ENABLE_STREAM_ENDPOINT) server.on("/stream", HTTP_GET, handleStream);
-
-  server.on("/generate_204", HTTP_GET, []() {
-    server.sendHeader("Location", "http://192.168.4.1/setup", true);
-    server.send(302, "text/plain", "");
-  });
-  server.on("/hotspot-detect.html", HTTP_GET, []() {
-    server.sendHeader("Location", "http://192.168.4.1/setup", true);
-    server.send(302, "text/plain", "");
-  });
-  server.on("/canonical.html", HTTP_GET, []() {
-    server.sendHeader("Location", "http://192.168.4.1/setup", true);
-    server.send(302, "text/plain", "");
-  });
-  server.on("/ncsi.txt", HTTP_GET, []() {
-    server.sendHeader("Location", "http://192.168.4.1/setup", true);
-    server.send(302, "text/plain", "");
-  });
-  server.on("/connecttest.txt", HTTP_GET, []() {
-    server.sendHeader("Location", "http://192.168.4.1/setup", true);
-    server.send(302, "text/plain", "");
-  });
-
   server.onNotFound(handleNotFound);
 }
 
-void startSetupAP() {
-  currentMode = MODE_AP;
-  udpStarted = false;
-  WiFi.disconnect();
-  delay(100);
-
-  WiFi.mode(WIFI_AP);
-  WiFi.softAPConfig(AP_IP, AP_IP, AP_NETMASK);
-  WiFi.softAP(AP_SSID, AP_PASSWORD);
-
-  dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
-  dnsServer.start(DNS_PORT, "*", AP_IP);
-
-  if (!webServerStarted) {
-    registerServerRoutes();
-    server.begin();
-    webServerStarted = true;
-  }
-
-  Serial.println();
-  Serial.println("==================================================");
-  Serial.println("[AP MODE] Setup Hotspot Active!");
-  Serial.printf("  SSID: %s\n", AP_SSID);
-  Serial.println("  IP:   192.168.4.1");
-  Serial.println("  Connect to this Wi-Fi from your phone or PC.");
-  Serial.println("  Browse to: http://192.168.4.1/setup");
-  Serial.println("==================================================");
-  Serial.println();
-}
-
 void startStationServer() {
-  if (!MDNS.begin("poultrycam")) {
-    Serial.println("[MDNS] Error setting up MDNS responder!");
-  } else {
-    Serial.println("[MDNS] Hostname active: http://poultrycam.local");
-    MDNS.addService("http", "tcp", 80);
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!MDNS.begin("poultrycam")) {
+      Serial.println("[MDNS] Error setting up MDNS responder!");
+    } else {
+      Serial.println("[MDNS] Hostname active: http://poultrycam.local");
+      MDNS.addService("http", "tcp", 80);
+      mdnsStarted = true;
+    }
   }
 
   if (!webServerStarted) {
@@ -830,15 +567,12 @@ void startStationServer() {
     webServerStarted = true;
   }
   Serial.println("[SERVER] Camera web server started.");
-  Serial.print("[SERVER] Status URL: http://");
-  Serial.println(WiFi.localIP());
-  Serial.print("[SERVER] Setup URL:  http://");
-  Serial.print(WiFi.localIP());
-  Serial.println("/setup");
-  Serial.println("[SERVER] Local name: http://poultrycam.local");
-
-  // Broadcast UDP to find the poultry backend automatically
-  discoverBackendServer();
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("[SERVER] Status URL: http://");
+    Serial.println(WiFi.localIP());
+    Serial.println("[SERVER] Local name: http://poultrycam.local");
+    discoverBackendServer();
+  }
 }
 
 void runAutomaticCapture() {
@@ -864,8 +598,6 @@ void setup() {
   delay(1000);
   printBanner();
 
-  loadConfiguration();
-
   Serial.println("Initializing camera hardware...");
   cameraReady = initializeCamera();
   if (!cameraReady) {
@@ -875,33 +607,21 @@ void setup() {
   Serial.println("Attempting Wi-Fi connection...");
   bool connected = connectToWiFi();
 
-  if (connected) {
-    currentMode = MODE_STA;
-    startStationServer();
-  } else {
-    Serial.println("[WIFI] Could not connect to saved Wi-Fi. Launching Setup Hotspot...");
-    startSetupAP();
+  startStationServer();
+
+  if (!connected) {
+    Serial.println("[WIFI] Startup connection failed. Will continue retrying in background.");
   }
 }
 
 void loop() {
-  if (shouldReboot && millis() >= rebootAtMillis) {
-    Serial.println("[SYSTEM] Restarting ESP32...");
-    delay(100);
-    ESP.restart();
-  }
+  maintainWiFi();
 
-  if (currentMode == MODE_AP) {
-    dnsServer.processNextRequest();
+  if (WiFi.status() == WL_CONNECTED) {
+    checkIncomingDiscovery();
     server.handleClient();
-  } else {
-    maintainWiFi();
-    if (WiFi.status() == WL_CONNECTED) {
-      checkIncomingDiscovery();
-      server.handleClient();
-      if (cameraReady) {
-        runAutomaticCapture();
-      }
+    if (cameraReady) {
+      runAutomaticCapture();
     }
   }
 

@@ -1,8 +1,10 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { Images, RefreshCw, X, Calendar, Clock, HardDrive, CheckCircle2, AlertCircle, Eye, Filter } from 'lucide-react';
+import { Images, RefreshCw, X, Calendar, Clock, HardDrive, CheckCircle2, AlertCircle, Eye, Filter, Upload, ShieldCheck } from 'lucide-react';
 import type { CameraFrame, TimeRangeFilter } from '../types/monitoring';
 import { fetchCameraFrameHistory, resolveFrameImageUrl } from '../services/api';
 import RiskAnalysisBadge from './RiskAnalysisBadge';
+import ManualPhotoUploadModal from './ManualPhotoUploadModal';
+import { extractSuggestions, cleanDescriptionText } from '../lib/suggestionHelper';
 
 interface CameraGalleryProps {
   deviceId?: string;
@@ -25,6 +27,7 @@ export const CameraGallery: React.FC<CameraGalleryProps> = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedFrame, setSelectedFrame] = useState<CameraFrame | null>(null);
+  const [uploadModalOpen, setUploadModalOpen] = useState(false);
 
   const loadGallery = useCallback(async () => {
     try {
@@ -104,6 +107,15 @@ export const CameraGallery: React.FC<CameraGalleryProps> = ({
           <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 border border-blue-100">
             {filteredFrames.length} {filteredFrames.length === 1 ? 'Capture' : 'Captures'}
           </span>
+
+          <button
+            onClick={() => setUploadModalOpen(true)}
+            className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-xs hover:from-blue-700 hover:to-indigo-700 transition"
+            title="Upload photo for AI analysis"
+          >
+            <Upload size={13} />
+            <span>Upload & Inspect</span>
+          </button>
 
           <button
             onClick={loadGallery}
@@ -260,9 +272,36 @@ export const CameraGallery: React.FC<CameraGalleryProps> = ({
                 {selectedFrame.ai_description && (
                   <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-700 border border-slate-200">
                     <span className="font-semibold block mb-1">AI Description:</span>
-                    {selectedFrame.ai_description}
+                    {cleanDescriptionText(selectedFrame.ai_description)}
                   </div>
                 )}
+
+                {/* AI Suggestive Care Instructions */}
+                {(() => {
+                  const suggestions = extractSuggestions(
+                    selectedFrame.ai_description,
+                    selectedFrame.ai_stress_risk,
+                    selectedFrame.ai_indicators,
+                    selectedFrame.ai_suggestions
+                  );
+                  if (!suggestions.length) return null;
+                  return (
+                    <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 p-3 space-y-2">
+                      <div className="flex items-center gap-1.5 text-indigo-700 font-bold text-xs">
+                        <ShieldCheck size={14} />
+                        <span>AI Suggestive Instructions:</span>
+                      </div>
+                      <ul className="space-y-1.5 text-xs text-slate-700">
+                        {suggestions.map((item, idx) => (
+                          <li key={idx} className="flex items-start gap-2 bg-white/90 rounded-lg p-2 border border-indigo-100/60 shadow-2xs">
+                            <span className="h-1.5 w-1.5 rounded-full bg-indigo-600 mt-1.5 shrink-0" />
+                            <span className="leading-relaxed font-medium">{item}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                })()}
 
                 <div className="space-y-2 border-t border-slate-100 pt-3 text-xs">
                   <div className="flex justify-between text-slate-600">
@@ -308,6 +347,17 @@ export const CameraGallery: React.FC<CameraGalleryProps> = ({
           </div>
         </div>
       )}
+
+      {/* Manual Upload and AI Inspection Modal */}
+      <ManualPhotoUploadModal
+        isOpen={uploadModalOpen}
+        onClose={() => setUploadModalOpen(false)}
+        deviceId={deviceId}
+        onAnalysisComplete={(newFrame) => {
+          setFrames((prev) => [newFrame, ...prev.filter((f) => f.frame_id !== newFrame.frame_id)]);
+          setSelectedFrame(newFrame);
+        }}
+      />
     </div>
   );
 };

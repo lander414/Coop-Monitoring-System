@@ -7,8 +7,8 @@
 // =========================
 // Static Wi-Fi & Backend Configuration
 // =========================
-const char* WIFI_SSID = "Lander Agustin";
-const char* WIFI_PASSWORD = "dodoy414";
+const char* WIFI_SSID = "MAXWELL";
+const char* WIFI_PASSWORD = "maxwell11";
 
 // Optional: Static IP configuration
 // Set USE_STATIC_IP to true to use a fixed IP instead of router DHCP
@@ -19,7 +19,7 @@ const IPAddress SUBNET_MASK(255, 255, 255, 0);
 const IPAddress DNS_IP(192, 168, 100, 1);
 
 // Backend ingestion settings
-const char* DEFAULT_BACKEND_URL = "http://192.168.100.14:3000/api/devices/ESP32_CAM_01/frames";
+const char* DEFAULT_BACKEND_URL = "http://192.168.100.12:3000/api/devices/ESP32_CAM_01/frames";
 const char* DEVICE_INGEST_KEY = "c69d3b007c0243369f7a7613ed324e612dcd222c0e924f5c9325470597c80379";
 
 const char* DEVICE_ID = "ESP32_CAM_01";

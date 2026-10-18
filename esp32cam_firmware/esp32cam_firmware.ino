@@ -8,8 +8,13 @@
 // =========================
 // Wi-Fi & Backend Configuration (from coop_config.h)
 // =========================
+<<<<<<< HEAD
 const char* WIFI_SSID = COOP_WIFI_SSID;
 const char* WIFI_PASSWORD = COOP_WIFI_PASSWORD;
+=======
+const char* WIFI_SSID = "MAXWELL";
+const char* WIFI_PASSWORD = "maxwell11";
+>>>>>>> 721b3b437909fea9dc58fd4e1f710e972cf96215
 
 // Optional: Static IP configuration
 // Set USE_STATIC_IP to true to use a fixed IP instead of router DHCP
@@ -19,9 +24,15 @@ const IPAddress GATEWAY_IP(192, 168, 100, 1);
 const IPAddress SUBNET_MASK(255, 255, 255, 0);
 const IPAddress DNS_IP(192, 168, 100, 1);
 
+<<<<<<< HEAD
 // Backend ingestion settings (from coop_config.h)
 const char* DEFAULT_BACKEND_URL = "http://" COOP_BACKEND_HOST ":" COOP_BACKEND_PORT_STR "/api/devices/" CAMERA_NODE_DEVICE_ID "/frames";
 const char* DEVICE_INGEST_KEY = COOP_DEVICE_INGEST_KEY;
+=======
+// Backend ingestion settings
+const char* DEFAULT_BACKEND_URL = "http://192.168.100.12:3000/api/devices/ESP32_CAM_01/frames";
+const char* DEVICE_INGEST_KEY = "c69d3b007c0243369f7a7613ed324e612dcd222c0e924f5c9325470597c80379";
+>>>>>>> 721b3b437909fea9dc58fd4e1f710e972cf96215
 
 const char* DEVICE_ID = CAMERA_NODE_DEVICE_ID;
 const char* FIRMWARE_VERSION = "esp32cam-static-1.3";

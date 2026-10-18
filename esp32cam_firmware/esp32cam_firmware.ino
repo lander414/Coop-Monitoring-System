@@ -3,12 +3,13 @@
 #include <WebServer.h>
 #include <WiFiUdp.h>
 #include <ESPmDNS.h>
+#include "coop_config.h"
 
 // =========================
-// Static Wi-Fi & Backend Configuration
+// Wi-Fi & Backend Configuration (from coop_config.h)
 // =========================
-const char* WIFI_SSID = "Lander Agustin";
-const char* WIFI_PASSWORD = "dodoy414";
+const char* WIFI_SSID = COOP_WIFI_SSID;
+const char* WIFI_PASSWORD = COOP_WIFI_PASSWORD;
 
 // Optional: Static IP configuration
 // Set USE_STATIC_IP to true to use a fixed IP instead of router DHCP
@@ -18,11 +19,11 @@ const IPAddress GATEWAY_IP(192, 168, 100, 1);
 const IPAddress SUBNET_MASK(255, 255, 255, 0);
 const IPAddress DNS_IP(192, 168, 100, 1);
 
-// Backend ingestion settings
-const char* DEFAULT_BACKEND_URL = "http://192.168.100.14:3000/api/devices/ESP32_CAM_01/frames";
-const char* DEVICE_INGEST_KEY = "c69d3b007c0243369f7a7613ed324e612dcd222c0e924f5c9325470597c80379";
+// Backend ingestion settings (from coop_config.h)
+const char* DEFAULT_BACKEND_URL = "http://" COOP_BACKEND_HOST ":" COOP_BACKEND_PORT_STR "/api/devices/" CAMERA_NODE_DEVICE_ID "/frames";
+const char* DEVICE_INGEST_KEY = COOP_DEVICE_INGEST_KEY;
 
-const char* DEVICE_ID = "ESP32_CAM_01";
+const char* DEVICE_ID = CAMERA_NODE_DEVICE_ID;
 const char* FIRMWARE_VERSION = "esp32cam-static-1.3";
 
 // UDP Auto-Discovery port (auto-detects backend IP on the local network)
@@ -31,8 +32,8 @@ const unsigned int DISCOVERY_PORT = 5005;
 // Active backend URL (defaults to DEFAULT_BACKEND_URL, auto-updated if backend is detected via UDP)
 String backendUrl = DEFAULT_BACKEND_URL;
 
-// Capture and upload intervals
-const unsigned long CAPTURE_INTERVAL = 30000UL;
+// Capture and upload intervals (from coop_config.h)
+const unsigned long CAPTURE_INTERVAL = CAMERA_CAPTURE_INTERVAL_MS;
 const bool ENABLE_AUTO_CAPTURE = true;
 const bool ENABLE_AUTO_UPLOAD = true;
 const bool ENABLE_STREAM_ENDPOINT = false;   // Keep disabled to stabilize memory on ESP32-CAM
